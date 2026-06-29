@@ -1,12 +1,16 @@
 import datetime
 import logging
 import os
+import tomllib
 import uuid
+from pathlib import Path
 
+import httpx
 import inngest
 import inngest.fast_api
 from dotenv import load_dotenv
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
 from openai import OpenAI
 
 from custom_types import MediaType, RAGChunkAndSrc, RAGSearchResult, RAGUpsertResult, RAQQueryResult
@@ -200,6 +204,21 @@ async def rag_query(ctx: inngest.Context):
 # App
 # ---------------------------------------------------------------------------
 
+def _read_version() -> str:
+    try:
+        with open(Path(__file__).parent / "pyproject.toml", "rb") as f:
+            return tomllib.load(f)["project"]["version"]
+    except Exception:
+        return "unknown"
+
+
+def _check(url: str, timeout: float = 2.0) -> bool:
+    try:
+        return httpx.get(url, timeout=timeout).status_code < 500
+    except Exception:
+        return False
+
+
 app = FastAPI()
 
 inngest.fast_api.serve(
@@ -207,3 +226,60 @@ inngest.fast_api.serve(
     inngest_client,
     [rag_ingest_document, rag_ingest_image, rag_ingest_video, rag_query],
 )
+
+
+@app.get("/", response_class=HTMLResponse)
+async def status_page():
+    version = _read_version()
+    qdrant_ok  = _check("http://localhost:6333/healthz")
+    inngest_ok = _check("http://localhost:8288")
+    streamlit_ok = _check("http://localhost:8501")
+
+    def badge(ok: bool) -> str:
+        return ('<span style="color:#22c55e;font-weight:600">● UP</span>'
+                if ok else
+                '<span style="color:#ef4444;font-weight:600">● DOWN</span>')
+
+    return f"""<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Production RAG — Status</title>
+  <style>
+    *{{box-sizing:border-box;margin:0;padding:0}}
+    body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+          background:#0f172a;color:#e2e8f0;min-height:100vh;
+          display:flex;align-items:center;justify-content:center;padding:2rem}}
+    .card{{background:#1e293b;border-radius:1rem;padding:2.5rem;max-width:520px;
+           width:100%;box-shadow:0 25px 50px rgba(0,0,0,.5)}}
+    h1{{font-size:1.5rem;font-weight:700;margin-bottom:.25rem}}
+    .version{{color:#94a3b8;font-size:.875rem;margin-bottom:2rem}}
+    table{{width:100%;border-collapse:collapse}}
+    td{{padding:.75rem 0;border-bottom:1px solid #334155;font-size:.95rem}}
+    td:last-child{{text-align:right}}
+    tr:last-child td{{border-bottom:none}}
+    a{{color:#38bdf8;text-decoration:none}}
+    a:hover{{text-decoration:underline}}
+    .open-btn{{display:inline-block;margin-top:2rem;padding:.75rem 1.5rem;
+               background:#3b82f6;color:#fff;border-radius:.5rem;font-weight:600;
+               text-decoration:none;transition:background .2s}}
+    .open-btn:hover{{background:#2563eb;text-decoration:none}}
+    .ts{{color:#475569;font-size:.8rem;margin-top:1.5rem;text-align:right}}
+  </style>
+</head>
+<body>
+<div class="card">
+  <h1>Production RAG</h1>
+  <div class="version">v{version}</div>
+  <table>
+    <tr><td>FastAPI (this server)</td><td>{badge(True)}</td></tr>
+    <tr><td><a href="http://localhost:6333/dashboard" target="_blank">Qdrant</a></td><td>{badge(qdrant_ok)}</td></tr>
+    <tr><td><a href="http://localhost:8288" target="_blank">Inngest dev server</a></td><td>{badge(inngest_ok)}</td></tr>
+    <tr><td><a href="http://localhost:8501" target="_blank">Streamlit UI</a></td><td>{badge(streamlit_ok)}</td></tr>
+  </table>
+  <a class="open-btn" href="http://localhost:8501" target="_blank">Open App →</a>
+  <div class="ts">checked at {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</div>
+</div>
+</body>
+</html>"""
