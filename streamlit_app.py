@@ -1,6 +1,7 @@
 import asyncio
 import os
 import time
+import tomllib
 from collections import Counter
 from pathlib import Path
 
@@ -35,6 +36,15 @@ def run_async(coro):
             return loop.run_until_complete(coro)
         finally:
             loop.close()
+
+def _app_version() -> str:
+    try:
+        with open(Path(__file__).parent / "pyproject.toml", "rb") as f:
+            return tomllib.load(f)["project"]["version"]
+    except Exception:
+        return "unknown"
+
+_VERSION = _app_version()
 
 st.set_page_config(page_title="Production RAG", page_icon="🔍", layout="wide")
 
@@ -242,6 +252,8 @@ def fetch_db_stats() -> dict:
 # ---------------------------------------------------------------------------
 
 st.title("Production RAG")
+st.sidebar.success(f"✅ Up to date (v{_VERSION})")
+
 tab_ingest, tab_query, tab_db, tab_ig = st.tabs(["📥 Ingest", "💬 Query", "🗄️ Database", "📸 Instagram"])
 
 def _scan_folder(folder: Path) -> list[Path]:
