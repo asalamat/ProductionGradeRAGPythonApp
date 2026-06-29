@@ -18,18 +18,21 @@ from sklearn.decomposition import PCA
 import subprocess
 import sys
 
-nest_asyncio.apply()
+try:
+    nest_asyncio.apply()
+except ValueError:
+    # uvloop doesn't support nest_asyncio patching; run_async handles this
+    pass
 load_dotenv()
 
 
 def run_async(coro):
-    """Run an async coroutine safely regardless of Streamlit's event loop state."""
     try:
         loop = asyncio.get_event_loop()
         if loop.is_closed():
             raise RuntimeError("closed")
         return loop.run_until_complete(coro)
-    except RuntimeError:
+    except (RuntimeError, ValueError):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
