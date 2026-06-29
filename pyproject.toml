@@ -23,7 +23,7 @@ dependencies = [
 
     # Video: local transcription + frame extraction
     "openai-whisper>=20240930",
-    "opencv-python>=4.10.0.84",
+    "opencv-python-headless>=4.10.0.84",
 
     # Vector database
     "qdrant-client>=1.15.1",
