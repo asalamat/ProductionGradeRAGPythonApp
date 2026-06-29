@@ -242,7 +242,7 @@ def fetch_db_stats() -> dict:
 # ---------------------------------------------------------------------------
 
 st.title("Production RAG")
-tab_ingest, tab_query, tab_db = st.tabs(["📥 Ingest", "💬 Query", "🗄️ Database"])
+tab_ingest, tab_query, tab_db, tab_ig = st.tabs(["📥 Ingest", "💬 Query", "🗄️ Database", "📸 Instagram"])
 
 def _scan_folder(folder: Path) -> list[Path]:
     """Recursively find all supported files under folder."""
@@ -570,3 +570,157 @@ with tab_db:
 
     except Exception as e:
         st.error(f"Could not connect to Qdrant: {e}")
+
+# ---------------------------------------------------------------------------
+# UI — Instagram Post Generator
+# ---------------------------------------------------------------------------
+
+def _openai_client():
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if not api_key or api_key == "your-openai-api-key-here":
+        return None, "OPENAI_API_KEY not set. Add it to your .env file."
+    try:
+        from openai import OpenAI as _OpenAI
+        return _OpenAI(api_key=api_key), None
+    except Exception as e:
+        return None, str(e)
+
+
+def _generate_caption(client, topic: str, tone: str, extra_context: str, num_hashtags: int) -> str:
+    context_block = f"\n\nAdditional context:\n{extra_context}" if extra_context.strip() else ""
+    prompt = (
+        f"Write an Instagram caption about: {topic}\n"
+        f"Tone: {tone}\n"
+        f"Requirements:\n"
+        f"- Engaging opening line (hook)\n"
+        f"- 2–4 sentences of body copy\n"
+        f"- A clear call-to-action at the end\n"
+        f"- {num_hashtags} relevant hashtags on a new line at the bottom\n"
+        f"- Use line breaks for readability\n"
+        f"- NO markdown, NO asterisks, just clean text{context_block}\n\n"
+        f"Return ONLY the caption text."
+    )
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        temperature=0.85,
+        max_tokens=512,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a professional social media copywriter specialising in Instagram. "
+                    "You write punchy, authentic captions that drive engagement."
+                ),
+            },
+            {"role": "user", "content": prompt},
+        ],
+    )
+    return resp.choices[0].message.content.strip()
+
+
+def _generate_image(client, topic: str, style: str, aspect: str) -> str:
+    size_map = {"Square (1:1)": "1024x1024", "Portrait (4:5)": "1024x1024", "Story (9:16)": "1024x1792"}
+    size = size_map.get(aspect, "1024x1024")
+    image_prompt = (
+        f"Instagram-worthy photo of: {topic}. "
+        f"Style: {style}. "
+        f"High quality, visually striking, professional photography, "
+        f"warm natural lighting, social media aesthetic. "
+        f"No text overlays."
+    )
+    resp = client.images.generate(
+        model="dall-e-3",
+        prompt=image_prompt,
+        size=size,
+        quality="standard",
+        n=1,
+    )
+    return resp.data[0].url
+
+
+with tab_ig:
+    st.subheader("Instagram Post Generator")
+    st.caption("Generate a caption + AI image using OpenAI · gpt-4o-mini + DALL-E 3")
+
+    client_ig, key_error = _openai_client()
+
+    if key_error:
+        st.error(f"⚠️ {key_error}")
+        st.markdown(
+            "**To fix:**\n"
+            "1. Go to [platform.openai.com/api-keys](https://platform.openai.com/api-keys)\n"
+            "2. Create a new **Project API key** (starts with `sk-proj-`)\n"
+            "3. Paste it into `.env` → `OPENAI_API_KEY=sk-proj-...`\n"
+            "4. Restart Streamlit (`Ctrl+C` then `streamlit run streamlit_app.py`)"
+        )
+        st.info("💡 If your key starts with `sk-svcac`, it is a deprecated service-account key. Create a fresh one.")
+    else:
+        with st.form("ig_form"):
+            col_a, col_b = st.columns(2)
+
+            with col_a:
+                topic = st.text_area(
+                    "Topic / Subject",
+                    placeholder="e.g. our new summer collection of handmade jewellery",
+                    height=100,
+                )
+                tone = st.selectbox(
+                    "Caption tone",
+                    ["Inspirational", "Casual & friendly", "Professional", "Humorous", "Educational", "Luxurious"],
+                )
+                num_hashtags = st.slider("Number of hashtags", 5, 30, 15)
+
+            with col_b:
+                style = st.selectbox(
+                    "Image style",
+                    [
+                        "Bright & airy lifestyle",
+                        "Dark & moody editorial",
+                        "Flat lay product shot",
+                        "Candid street photography",
+                        "Minimalist studio",
+                        "Vibrant pop art",
+                        "Golden hour outdoors",
+                    ],
+                )
+                aspect = st.selectbox(
+                    "Image format",
+                    ["Square (1:1)", "Portrait (4:5)", "Story (9:16)"],
+                )
+                generate_image = st.checkbox("Generate AI image (DALL-E 3)", value=True)
+
+            extra_context = st.text_area(
+                "Extra context (optional)",
+                placeholder="Paste a product description, brand guidelines, or any notes…",
+                height=80,
+            )
+
+            submitted_ig = st.form_submit_button("✨ Generate Post", type="primary")
+
+        if submitted_ig:
+            if not topic.strip():
+                st.warning("Please enter a topic.")
+            else:
+                col_cap, col_img = st.columns([1, 1])
+
+                with col_cap:
+                    with st.spinner("Writing caption…"):
+                        try:
+                            caption = _generate_caption(client_ig, topic, tone, extra_context, num_hashtags)
+                            st.subheader("Caption")
+                            st.text_area("Copy this", value=caption, height=320, label_visibility="collapsed")
+                            st.caption(f"~{len(caption.split())} words · {len(caption)} characters")
+                        except Exception as e:
+                            st.error(f"Caption error: {e}")
+                            caption = None
+
+                if generate_image:
+                    with col_img:
+                        with st.spinner("Generating image with DALL-E 3 (may take ~15 s)…"):
+                            try:
+                                img_url = _generate_image(client_ig, topic, style, aspect)
+                                st.subheader("Image")
+                                st.image(img_url, use_container_width=True)
+                                st.caption("⚠️ URL expires in ~1 hour — right-click → Save image now")
+                            except Exception as e:
+                                st.error(f"Image error: {e}")

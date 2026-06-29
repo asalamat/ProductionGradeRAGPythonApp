@@ -10,3 +10,9 @@ wheels/
 .venv
 /uploads
 .env
+
+# Runtime data — not source code
+qdrant_storage/
+data/
+claude-flow.config.json
+.claude-flow/
